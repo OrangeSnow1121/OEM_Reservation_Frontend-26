@@ -1,0 +1,200 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>OEM Reservation System</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 2rem; }
+    .hidden { display: none; }
+    .form-group { margin-bottom: 1rem; }
+    label { display: block; margin-bottom: 0.3rem; }
+    input, select, button { padding: 0.4rem; width: 100%; max-width: 400px; margin-bottom: 0.5rem; }
+    button { cursor: pointer; }
+    #reservation-grid { margin-top: 2rem; display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 0.5rem; }
+    .time-slot { padding: 1rem; background: #f0f0f0; text-align: center; border: 1px solid #ccc; }
+    .reserved { background: #ffdddd; }
+  </style>
+</head>
+<body>
+  <h1>OEM Reservation System</h1>
+
+  <section id="login-section">
+    <h2>Login</h2>
+    <form id="login-form">
+      <div class="form-group">
+        <label for="login-username">Username</label>
+        <input type="text" id="login-username" required />
+      </div>
+      <div class="form-group">
+        <label for="login-password">Password</label>
+        <input type="password" id="login-password" required />
+      </div>
+      <button type="submit">Login</button>
+    </form>
+  </section>
+
+  <section id="main-section" class="hidden">
+    <h2>Reservation Viewer</h2>
+    <button id="logout-btn">Logout</button>
+
+    <div>
+      <label for="year-select">Year:</label>
+      <select id="year-select"></select>
+
+      <label for="month-select">Month:</label>
+      <select id="month-select"></select>
+
+      <label for="site-select">Site:</label>
+      <select id="site-select">
+        <option>McKinney site</option>
+        <option>Floyd site</option>
+        <option>E/// Site</option>
+        <option>Legacy Site (NSA)</option>
+        <option>Hospital Site (FR2-NRDC)</option>
+        <option>Dallas Downtown Parking Lot (FR2-ENDC)</option>
+      </select>
+    </div>
+
+    <div id="calendar-days"></div>
+    <div id="reservation-grid"></div>
+  </section>
+
+  <script>
+    const apiBase = "https://oem-reservation.onrender.com/api";
+    let token = null;
+    let role = null;
+
+    document.getElementById("login-form").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const username = document.getElementById("login-username").value;
+      const password = document.getElementById("login-password").value;
+      const res = await fetch(`${apiBase}/auth/login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username, password })
+      });
+      const data = await res.json();
+      if (res.ok) {
+        token = data.token;
+        role = data.role;
+        document.getElementById("login-section").classList.add("hidden");
+        document.getElementById("main-section").classList.remove("hidden");
+        populateYearMonth();
+      } else {
+        alert("Login failed");
+      }
+    });
+
+    document.getElementById("logout-btn").addEventListener("click", () => {
+      token = null;
+      location.reload();
+    });
+
+    function populateYearMonth() {
+      const yearSel = document.getElementById("year-select");
+      const monthSel = document.getElementById("month-select");
+      for (let y = 2025; y <= 2035; y++) {
+        const opt = document.createElement("option");
+        opt.value = y;
+        opt.textContent = y;
+        yearSel.appendChild(opt);
+      }
+      for (let m = 0; m < 12; m++) {
+        const opt = document.createElement("option");
+        opt.value = m;
+        opt.textContent = new Date(0, m).toLocaleString('default', { month: 'long' });
+        monthSel.appendChild(opt);
+      }
+      const now = new Date();
+      yearSel.value = now.getFullYear();
+      monthSel.value = now.getMonth();
+      updateCalendar();
+
+      yearSel.addEventListener("change", updateCalendar);
+      monthSel.addEventListener("change", updateCalendar);
+    }
+
+    function updateCalendar() {
+      const year = +document.getElementById("year-select").value;
+      const month = +document.getElementById("month-select").value;
+      const daysInMonth = new Date(year, month + 1, 0).getDate();
+      const calendar = document.getElementById("calendar-days");
+      calendar.innerHTML = "";
+      for (let d = 1; d <= daysInMonth; d++) {
+        const btn = document.createElement("button");
+        btn.textContent = `${year}-${String(month + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+        btn.onclick = () => loadReservations(btn.textContent);
+        calendar.appendChild(btn);
+      }
+    }
+
+    async function loadReservations(date) {
+      const site = document.getElementById("site-select").value;
+      try {
+        const res = await fetch(`${apiBase}/reservations/${date}`, {
+          headers: { Authorization: `Bearer ${token}` }
+        });
+
+        if (!res.ok) throw new Error(`Server responded ${res.status}`);
+
+        const data = await res.json();
+        const grid = document.getElementById("reservation-grid");
+        grid.innerHTML = `<h3>${site} - ${date}</h3>`;
+
+        const filtered = data.filter(r => r.site === site);
+        for (let hour = 6; hour < 20; hour += 2) {
+          const slot = `${hour}:00-${hour+2}:00`;
+          const div = document.createElement("div");
+          div.className = "time-slot";
+          div.textContent = slot;
+          const reserved = filtered.find(r => r.timeSlot === slot);
+          if (reserved) {
+            div.classList.add("reserved");
+            if (role === "admin") {
+              div.onclick = async () => {
+                const newNote = prompt("Edit/Delete note:", reserved.note || "");
+                if (newNote === null) return;
+                if (newNote === "") {
+                  await fetch(`${apiBase}/reservations/${reserved._id}`, {
+                    method: "DELETE",
+                    headers: { Authorization: `Bearer ${token}` }
+                  });
+                } else {
+                  await fetch(`${apiBase}/reservations/${reserved._id}`, {
+                    method: "PATCH",
+                    headers: {
+                      "Content-Type": "application/json",
+                      Authorization: `Bearer ${token}`
+                    },
+                    body: JSON.stringify({ note: newNote })
+                  });
+                }
+                loadReservations(date);
+              };
+            }
+          } else if (role === "admin") {
+            div.onclick = async () => {
+              const note = prompt("Add note (optional):");
+              const resp = await fetch(`${apiBase}/reservations`, {
+                method: "POST",
+                headers: {
+                  "Content-Type": "application/json",
+                  Authorization: `Bearer ${token}`
+                },
+                body: JSON.stringify({ site, date, timeSlot: slot, note })
+              });
+              if (resp.ok) loadReservations(date);
+              else alert("Failed to reserve");
+            };
+          }
+          grid.appendChild(div);
+        }
+      } catch (error) {
+        alert("Error loading reservations: " + error.message);
+      }
+    }
+  </script>
+</body>
+</html>
