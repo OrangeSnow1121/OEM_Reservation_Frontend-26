@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -65,26 +66,10 @@
     let token = localStorage.getItem("token");
     let role = localStorage.getItem("role");
 
-    async function secureFetch(url, options = {}) {
-      if (!options.headers) options.headers = {};
-      if (token) options.headers.Authorization = `Bearer ${token}`;
-      const res = await fetch(url, options);
-
-      if (res.status === 403 || res.status === 401) {
-        alert("Session expired or invalid token. Please log in again.");
-        localStorage.clear();
-        token = null;
-        role = null;
-        location.reload();
-        return null;
-      }
-
-      return res;
-    }
-
     window.addEventListener("load", () => {
       if (token && role) {
         document.getElementById("login-section").classList.add("hidden");
+		
         document.getElementById("main-section").classList.remove("hidden");
         populateYearMonth();
       }
@@ -94,12 +79,11 @@
       e.preventDefault();
       const username = document.getElementById("login-username").value;
       const password = document.getElementById("login-password").value;
-      const res = await secureFetch(`${apiBase}/auth/login`, {
+      const res = await fetch(`${apiBase}/auth/login`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ username, password })
       });
-      if (!res) return;
       const data = await res.json();
       if (res.ok) {
         token = data.token;
@@ -162,55 +146,67 @@
 
     async function loadReservations(date) {
       const site = document.getElementById("site-select").value;
-      const res = await secureFetch(`${apiBase}/reservations/${date}`);
-      if (!res) return;
-      const data = await res.json();
-      const grid = document.getElementById("reservation-grid");
-      grid.innerHTML = `<h3>${site} - ${date}</h3>`;
+      try {
+        const res = await fetch(`${apiBase}/reservations/${date}`, {
+          headers: { Authorization: `Bearer ${token}` }
+        });
 
-      const filtered = data.filter(r => r.site === site);
-      for (let hour = 6; hour < 20; hour += 2) {
-        const slot = `${hour}:00-${hour+2}:00`;
-        const div = document.createElement("div");
-        div.className = "time-slot";
-        div.textContent = slot;
-        const reserved = filtered.find(r => r.timeSlot === slot);
-        if (reserved) {
-          div.classList.add("reserved");
-          if (role === "admin") {
+        if (!res.ok) throw new Error(`Server responded ${res.status}`);
+
+        const data = await res.json();
+        const grid = document.getElementById("reservation-grid");
+        grid.innerHTML = `<h3>${site} - ${date}</h3>`;
+
+        const filtered = data.filter(r => r.site === site);
+        for (let hour = 6; hour < 20; hour += 2) {
+          const slot = `${hour}:00-${hour+2}:00`;
+          const div = document.createElement("div");
+          div.className = "time-slot";
+          div.textContent = slot;
+          const reserved = filtered.find(r => r.timeSlot === slot);
+          if (reserved) {
+            div.classList.add("reserved");
+            if (role === "admin") {
+              div.onclick = async () => {
+                const newNote = prompt("Edit/Delete note:", reserved.note || "");
+                if (newNote === null) return;
+                if (newNote === "") {
+                  await fetch(`${apiBase}/reservations/${reserved._id}`, {
+                    method: "DELETE",
+                    headers: { Authorization: `Bearer ${token}` }
+                  });
+                } else {
+                  await fetch(`${apiBase}/reservations/${reserved._id}`, {
+                    method: "PATCH",
+                    headers: {
+                      "Content-Type": "application/json",
+                      Authorization: `Bearer ${token}`
+                    },
+                    body: JSON.stringify({ note: newNote })
+                  });
+                }
+                loadReservations(date);
+              };
+            }
+          } else if (role === "admin") {
             div.onclick = async () => {
-              const newNote = prompt("Edit/Delete note:", reserved.note || "");
-              if (newNote === null) return;
-              if (newNote === "") {
-                const del = await secureFetch(`${apiBase}/reservations/${reserved._id}`, {
-                  method: "DELETE"
-                });
-                if (del) loadReservations(date);
-              } else {
-                const patch = await secureFetch(`${apiBase}/reservations/${reserved._id}`, {
-                  method: "PATCH",
-                  headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({ note: newNote })
-                });
-                if (patch) loadReservations(date);
-              }
+              const note = prompt("Add note (optional):");
+              const resp = await fetch(`${apiBase}/reservations`, {
+                method: "POST",
+                headers: {
+                  "Content-Type": "application/json",
+                  Authorization: `Bearer ${token}`
+                },
+                body: JSON.stringify({ site, date, timeSlot: slot, note })
+              });
+              if (resp.ok) loadReservations(date);
+              else alert("Failed to reserve");
             };
           }
-        } else if (role === "admin") {
-          div.onclick = async () => {
-            const note = prompt("Add note (optional):");
-            const resp = await secureFetch(`${apiBase}/reservations`, {
-              method: "POST",
-              headers: {
-                "Content-Type": "application/json"
-              },
-              body: JSON.stringify({ site, date, timeSlot: slot, note })
-            });
-            if (resp) loadReservations(date);
-            else alert("Failed to reserve");
-          };
+          grid.appendChild(div);
         }
-        grid.appendChild(div);
+      } catch (error) {
+        alert("Error loading reservations: " + error.message);
       }
     }
   </script>
