@@ -63,8 +63,16 @@
 
   <script>
     const apiBase = "https://oem-reservation.onrender.com/api";
-    let token = null;
-    let role = null;
+    let token = localStorage.getItem("token");
+    let role = localStorage.getItem("role");
+
+    window.addEventListener("load", () => {
+      if (token && role) {
+        document.getElementById("login-section").classList.add("hidden");
+        document.getElementById("main-section").classList.remove("hidden");
+        populateYearMonth();
+      }
+    });
 
     document.getElementById("login-form").addEventListener("submit", async (e) => {
       e.preventDefault();
@@ -79,6 +87,8 @@
       if (res.ok) {
         token = data.token;
         role = data.role;
+        localStorage.setItem("token", token);
+        localStorage.setItem("role", role);
         document.getElementById("login-section").classList.add("hidden");
         document.getElementById("main-section").classList.remove("hidden");
         populateYearMonth();
@@ -88,7 +98,10 @@
     });
 
     document.getElementById("logout-btn").addEventListener("click", () => {
+      localStorage.removeItem("token");
+      localStorage.removeItem("role");
       token = null;
+      role = null;
       location.reload();
     });
 
